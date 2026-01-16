@@ -18,6 +18,7 @@ from memax.equinox.set_actions.lstm import LSTM
 from memax.equinox.set_actions.mgu import MGU
 from memax.equinox.set_actions.spherical import Spherical
 from memax.equinox.models.residual import ResidualModel
+from memax.equinox.models.mhc import MHCModel
 from memax.equinox.semigroups.fwp import FWP, FWPSemigroup
 from memax.equinox.semigroups.fart import FART, FARTSemigroup
 from memax.equinox.semigroups.ffm import FFM, FFMSemigroup
@@ -380,3 +381,108 @@ def get_residual_memory_models(
             )
             for name in models
         }
+
+
+def get_mhc_models(
+    input: int,
+    hidden: int,
+    output: int,
+    num_layers: int = 2,
+    models: str = "all",
+    *,
+    key: jax.random.PRNGKey,
+    layer_kwargs: Optional[Dict[str, Any]] = None,
+    model_kwargs: Optional[Dict] = None,
+) -> Dict[str, Module]:
+    """Returns a dictionary of MHC models."""
+    layer_kwargs = layer_kwargs or {}
+    model_kwargs = model_kwargs or {}
+    layers = {
+        # for debug
+        "MLP": lambda recurrent_size, key: MLP(
+            recurrent_size=recurrent_size, key=key, **layer_kwargs.get("MLP", {})
+        ),
+        # semigroups
+        "NMax": lambda recurrent_size, key: NMax(
+            recurrent_size=recurrent_size, key=key
+        ),
+        "FART": lambda recurrent_size, key: FART(
+           hidden_size=recurrent_size, recurrent_size=round(recurrent_size ** 0.5), key=key, **layer_kwargs.get("FART", {})
+        ),
+        "FWP": lambda recurrent_size, key: FWP(
+           hidden_size=recurrent_size, recurrent_size=round(recurrent_size ** 0.5), key=key, **layer_kwargs.get("FWP", {})
+        ),
+        "DeltaNet": lambda recurrent_size, key: DeltaNet(
+           hidden_size=recurrent_size, recurrent_size=round(recurrent_size ** 0.5), key=key, **layer_kwargs.get("DeltaNet", {})
+        ),
+        "DeltaProduct": lambda recurrent_size, key: DeltaProduct(
+           hidden_size=recurrent_size, recurrent_size=round(recurrent_size ** 0.5), rank=4, key=key, **layer_kwargs.get("DeltaProduct", {})
+        ),
+        "GDN": lambda recurrent_size, key: GDN(
+           hidden_size=recurrent_size, recurrent_size=round(recurrent_size ** 0.5), key=key, **layer_kwargs.get("GDN", {})
+        ),
+        "FFM": lambda recurrent_size, key: FFM(
+           hidden_size=recurrent_size, context_size=recurrent_size//4, trace_size=4, key=key, **layer_kwargs.get("FFM", {})
+        ),
+        "S6": lambda recurrent_size, key: S6(
+            hidden_size=recurrent_size, recurrent_size=recurrent_size, key=key, **layer_kwargs.get("S6", {})
+        ),
+        "PSpherical": lambda recurrent_size, key: PSpherical(
+            recurrent_size=round(recurrent_size ** 0.5),
+            hidden_size=recurrent_size,
+            key=key,
+            **layer_kwargs.get("PSpherical", {})
+        ),
+        "LRU": lambda recurrent_size, key: LRU(
+            hidden_size=recurrent_size, recurrent_size=recurrent_size, key=key, **layer_kwargs.get("LRU", {})
+        ),
+        "LinearRNN": lambda recurrent_size, key: LinearRecurrent(
+            recurrent_size=recurrent_size, key=key, **layer_kwargs.get("LinearRNN", {})
+        ),
+        "Stack": lambda recurrent_size, key: Stack(
+            recurrent_size=recurrent_size, key=key, **layer_kwargs.get("Stack", {"window_size": 4})
+        ),
+        "Attention": lambda recurrent_size, key: Attention(
+            recurrent_size=recurrent_size, positional_embedding=None, key=key, **layer_kwargs.get("Attention", {"window_size": 20})
+        ),
+        "Attention-RoPE": lambda recurrent_size, key: Attention(
+            recurrent_size=recurrent_size, positional_embedding="rope", key=key, **layer_kwargs.get("Attention-RoPE", {"window_size": 20})
+        ),
+        "Attention-ALiBi": lambda recurrent_size, key: Attention(
+            recurrent_size=recurrent_size, positional_embedding="alibi", key=key, **layer_kwargs.get("Attention-ALiBi", {"window_size": 20})
+        ),
+        # set actions
+        "GRU": lambda recurrent_size, key: GRU(recurrent_size=recurrent_size, key=key, **layer_kwargs.get("GRU", {})),
+        "Elman": lambda recurrent_size, key: Elman(
+           hidden_size=recurrent_size, recurrent_size=recurrent_size, key=key, **layer_kwargs.get("Elman", {})
+        ),
+        "ElmanReLU": lambda recurrent_size, key: Elman(
+           hidden_size=recurrent_size, recurrent_size=recurrent_size, key=key, activation=jax.nn.relu, **layer_kwargs.get("ElmanReLU", {})
+        ),
+        "IndRNN": lambda recurrent_size, key: IndRNN(
+           hidden_size=recurrent_size, recurrent_size=recurrent_size, key=key, activation=jax.nn.relu, **layer_kwargs.get("IndRNN", {})
+        ),
+        "Spherical": lambda recurrent_size, key: Spherical(
+            hidden_size=recurrent_size, recurrent_size=recurrent_size, key=key, **layer_kwargs.get("Spherical", {})
+        ),
+        "MGU": lambda recurrent_size, key: MGU(recurrent_size=recurrent_size, key=key, **layer_kwargs.get("MGU", {})),
+        "LSTM": lambda recurrent_size, key: LSTM(recurrent_size=recurrent_size, key=key, **layer_kwargs.get("LSTM", {})),
+    }
+
+    if models == "all":
+        selected_models = layers
+    else:
+        selected_models = {name: layers[name] for name in models}
+    
+    return {
+        name: MHCModel(
+            make_layer_fn=fn,
+            input_size=input,
+            recurrent_size=hidden,
+            output_size=output,
+            num_layers=num_layers,
+            key=key,
+            **model_kwargs,
+        )
+        for name, fn in selected_models.items()
+    }
