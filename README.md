@@ -21,21 +21,24 @@ We implement both linear and log-complexity recurrent models.
 | Linear Recurrent Neural Network | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/1709.04057) | [[code]](memax/equinox/semigroups/lrnn.py) |
 | Fast Autoregressive Transformer | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/2006.16236) | [[code]](memax/equinox/semigroups/fart.py) |
 | Fast and Forgetful Memory | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/2310.04128) | [[code]](memax/equinox/semigroups/ffm.py) |
+| Frame Stacking | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/1312.5602) | [[code]](memax/equinox/semigroups/stack.py) |
 | Rotational RNN (RotRNN) | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/2407.07239) | [[code]](memax/equinox/semigroups/spherical.py) |
 | Fast Weight Programmer | $O(\log{n})$ | [[paper]](https://arxiv.org/pdf/2508.08435) | [[code]](memax/equinox/semigroups/fwp.py) |
 | DeltaNet | $O(\log{n})$ | [[paper]](https://arxiv.org/pdf/2406.06484) | [[code]](memax/equinox/semigroups/delta.py) |
 | Gated DeltaNet | $O(\log{n})$ | [[paper]](https://arxiv.org/pdf/2412.06464) | [[code]](memax/equinox/semigroups/gdn.py) |
 | DeltaProduct | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/2502.10297) | [[code]](memax/equinox/semigroups/deltap.py) |
+| Test Time Training - Linear | $O(\log{n})$ | [[paper]](https://proceedings.mlr.press/v267/sun25h.html) | [[code]](memax/equinox/semigroups/ttt.py) |
 | Attention | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/1706.03762) | [[code]](memax/equinox/semigroups/attn.py) |
 | RoPE-Attention | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/2104.09864) | [[code]](memax/equinox/semigroups/attn.py) |
 | ALiBi-Attention | $O(\log{n})$ | [[paper]](https://arxiv.org/abs/2108.12409) | [[code]](memax/equinox/semigroups/attn.py) |
 | Elman Network | $O(n)$ | [[paper]](https://www.sciencedirect.com/science/article/pii/036402139090002E) | [[code]](memax/equinox/set_actions/elman.py) |
 | Gated Recurrent Unit | $O(n)$ | [[paper]](https://arxiv.org/abs/1412.3555) | [[code]](memax/equinox/set_actions/gru.py) |
+| Independently Recurrent Neural Network | $O(n)$ | [[paper]](https://arxiv.org/abs/1803.04831) | [[code]](memax/equinox/set_actions/indrnn.py) |
 | Minimal Gated Unit | $O(n)$ | [[paper]](https://arxiv.org/abs/1603.09420) | [[code]](memax/equinox/set_actions/mgu.py) |
 | Long Short-Term Memory Unit | $O(n)$ | [[paper]](https://ieeexplore.ieee.org/abstract/document/6795963) | [[code]](memax/equinox/set_actions/lstm.py) |
 
 # Datasets
-We provide [datasets](memax/datasets) to test our recurrent models. 
+We provide [datasets](memax/datasets) to test our recurrent models.
 
 ### Sequential MNIST [[HuggingFace]](https://huggingface.co/datasets/ylecun/mnist) [[Code]](memax/datasets/sequential_mnist.py)
 > The recurrent model receives an MNIST image pixel by pixel, and must predict the digit class.
@@ -53,7 +56,7 @@ We provide [datasets](memax/datasets) to test our recurrent models.
 > **Sequence Lengths:** `[20, 100, 1_000]`
 
 # Getting Started
-Install `memax` using pip and git for your specific framework
+Install `memax` using pip for your specific framework:
 ```bash
 pip install "memax[equinox]"
 pip install "memax[flax]"
@@ -64,9 +67,18 @@ pip install "memax[train,equinox]"
 pip install "memax[train,flax]"
 ```
 
+Or install from source using `uv`:
+
+```bash
+uv sync --extra equinox # Only equinox
+uv sync --extra flax # Only flax
+uv sync --extra train --extra equinox
+uv sync --extra train --extra flax
+```
+
 ## Equinox Quickstart
 ```python
-from memax.equinox.train_utils import get_residual_memory_model
+from memax.equinox.train_utils import build_named_model
 import jax
 import jax.numpy as jnp
 from equinox import filter_jit, filter_vmap
@@ -74,13 +86,13 @@ from memax.equinox.train_utils import add_batch_dim
 
 T, F = 5, 6 # time and feature dim
 
-model = get_residual_memory_model(
-    model_name="LRU", input=F, hidden=8, output=1, num_layers=2, 
+model = build_named_model(
+    model_name="LRU", input=F, hidden=8, output=1, num_layers=2,
     key=jax.random.key(0)
 )
 
 starts = jnp.array([True, False, False, True, False])
-xs = jnp.zeros((T, F)) 
+xs = jnp.zeros((T, F))
 hs, ys = filter_jit(model)(model.initialize_carry(), (xs, starts))
 last_h = filter_jit(model.latest_recurrent_state)(hs)
 
@@ -100,7 +112,7 @@ python run_linen_experiments.py # flax linen framework
 ```
 
 
-## Custom Architectures 
+## Custom Architectures
 memax uses the [`equinox`](https://github.com/patrick-kidger/equinox) neural network library. See [the semigroups directory](memax/equinox/semigroups) for fast recurrent models that utilize an associative scan. We also provide a beta [`flax.linen`](https://flax-linen.readthedocs.io/en/latest/) API. In this example, we focus on `equinox`.
 
 ```python
@@ -147,7 +159,7 @@ print(debug_shape(h))
 #     (5,) # Start carries for first layer
 #     (5, 16) # Recurrent states of second layer
 #     (5,)) # Start carries for second layer
-# 
+#
 # Do your prediction
 prediction = jax.nn.softmax(y)
 

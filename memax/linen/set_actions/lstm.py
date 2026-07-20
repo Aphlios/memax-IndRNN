@@ -1,15 +1,15 @@
-import equinox as eqx
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from beartype import beartype as typechecker
-from beartype.typing import Callable, Optional, Tuple
-from equinox import nn
+from beartype.typing import Optional, Tuple
 from jaxtyping import Array, Float, PRNGKeyArray, Shaped, jaxtyped
 
-from memax.equinox.gras import GRAS
-from memax.equinox.groups import BinaryAlgebra, Resettable, SetAction
-from memax.equinox.scans import set_action_scan
-from memax.mtypes import Input, InputEmbedding, StartFlag
+from memax.linen.gras import GRAS
+from memax.linen.groups import Resettable, SetAction
+from memax.linen.inits import dense as equinox_dense
+from memax.linen.scans import set_action_scan
+from memax.mtypes import Input, StartFlag
 
 LSTMRecurrentState = Tuple[Float[Array, "Recurrent"], Float[Array, "Recurrent"]]
 LSTMRecurrentStateWithReset = Tuple[LSTMRecurrentState, StartFlag]
@@ -23,39 +23,19 @@ class LSTMSetAction(SetAction):
     """
 
     recurrent_size: int
-    U_f: nn.Linear
-    U_i: nn.Linear
-    U_o: nn.Linear
-    U_c: nn.Linear
-    W_f: nn.Linear
-    W_i: nn.Linear
-    W_o: nn.Linear
-    W_c: nn.Linear
+    use_equinox_init: bool = True
 
-    def __init__(
-        self,
-        recurrent_size: int,
-        key,
-    ):
-        self.recurrent_size = recurrent_size
-        keys = jax.random.split(key, 8)
-        self.U_f = nn.Linear(
-            recurrent_size, recurrent_size, use_bias=False, key=keys[0]
-        )
-        self.U_i = nn.Linear(
-            recurrent_size, recurrent_size, use_bias=False, key=keys[1]
-        )
-        self.U_o = nn.Linear(
-            recurrent_size, recurrent_size, use_bias=False, key=keys[2]
-        )
-        self.U_c = nn.Linear(
-            recurrent_size, recurrent_size, use_bias=False, key=keys[3]
-        )
-
-        self.W_f = nn.Linear(recurrent_size, recurrent_size, key=keys[4])
-        self.W_i = nn.Linear(recurrent_size, recurrent_size, key=keys[5])
-        self.W_o = nn.Linear(recurrent_size, recurrent_size, key=keys[6])
-        self.W_c = nn.Linear(recurrent_size, recurrent_size, key=keys[7])
+    def setup(self):
+        n = self.recurrent_size
+        init = self.use_equinox_init
+        self.U_f = equinox_dense(n, n, use_bias=False, use_equinox_init=init)
+        self.U_i = equinox_dense(n, n, use_bias=False, use_equinox_init=init)
+        self.U_o = equinox_dense(n, n, use_bias=False, use_equinox_init=init)
+        self.U_c = equinox_dense(n, n, use_bias=False, use_equinox_init=init)
+        self.W_f = equinox_dense(n, n, use_equinox_init=init)
+        self.W_i = equinox_dense(n, n, use_equinox_init=init)
+        self.W_o = equinox_dense(n, n, use_equinox_init=init)
+        self.W_c = equinox_dense(n, n, use_equinox_init=init)
 
     @jaxtyped(typechecker=typechecker)
     def __call__(
@@ -82,6 +62,13 @@ class LSTMSetAction(SetAction):
             jnp.zeros((self.recurrent_size,)),
         )
 
+    @nn.nowrap
+    def zero_carry(self) -> LSTMRecurrentState:
+        return (
+            jnp.zeros((self.recurrent_size,)),
+            jnp.zeros((self.recurrent_size,)),
+        )
+
 
 class LSTM(GRAS):
     """
@@ -90,24 +77,7 @@ class LSTM(GRAS):
     Paper: https://www.bioinf.jku.at/publications/older/2604.pdf
     """
 
-    algebra: BinaryAlgebra
-    scan: Callable[
-        [
-            Callable[
-                [LSTMRecurrentStateWithReset, LSTMRecurrentStateWithReset],
-                LSTMRecurrentStateWithReset,
-            ],
-            LSTMRecurrentStateWithReset,
-            LSTMRecurrentStateWithReset,
-        ],
-        LSTMRecurrentStateWithReset,
-    ]
-
-    def __init__(self, recurrent_size, key):
-        keys = jax.random.split(key, 3)
-        self.readout_dim = recurrent_size
-        self.algebra = Resettable(LSTMSetAction(recurrent_size, key=keys[0]))
-        self.scan = set_action_scan
+    recurrent_size: int
 
     @jaxtyped(typechecker=typechecker)
     def forward_map(
@@ -133,3 +103,15 @@ class LSTM(GRAS):
         self, key: Optional[Shaped[PRNGKeyArray, ""]] = None
     ) -> LSTMRecurrentStateWithReset:
         return self.algebra.initialize_carry(key)
+
+    @nn.nowrap
+    def zero_carry(self) -> LSTMRecurrentStateWithReset:
+        return self.algebra.zero_carry()
+
+    @staticmethod
+    def default_algebra(**kwargs):
+        return Resettable(LSTMSetAction(**kwargs))
+
+    @staticmethod
+    def default_scan():
+        return set_action_scan

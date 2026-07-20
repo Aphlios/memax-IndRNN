@@ -1,14 +1,14 @@
-import equinox as eqx
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from beartype import beartype as typechecker
 from beartype.typing import Callable, Optional, Tuple
-from equinox import nn
 from jaxtyping import Array, Float, PRNGKeyArray, Shaped, jaxtyped
 
-from memax.equinox.gras import GRAS
-from memax.equinox.groups import BinaryAlgebra, Resettable, SetAction
-from memax.equinox.scans import set_action_scan
+from memax.linen.gras import GRAS
+from memax.linen.groups import Resettable, SetAction
+from memax.linen.inits import dense as equinox_dense
+from memax.linen.scans import set_action_scan
 from memax.mtypes import Input, StartFlag
 
 ElmanRecurrentState = Float[Array, "Recurrent"]
@@ -23,13 +23,12 @@ class ElmanSetAction(SetAction):
     """
 
     recurrent_size: int
-    U_h: nn.Linear
-    activation: eqx.Module
+    activation: Callable = jax.nn.tanh
+    use_equinox_init: bool = True
 
-    def __init__(self, recurrent_size: int, activation=jax.nn.tanh, *, key):
-        self.recurrent_size = recurrent_size
-        self.U_h = nn.Linear(recurrent_size, recurrent_size, key=key)
-        self.activation = activation
+    def setup(self):
+        n = self.recurrent_size
+        self.U_h = equinox_dense(n, n, use_equinox_init=self.use_equinox_init)
 
     @jaxtyped(typechecker=typechecker)
     def __call__(
@@ -43,6 +42,10 @@ class ElmanSetAction(SetAction):
     ) -> ElmanRecurrentState:
         return jnp.zeros((self.recurrent_size,))
 
+    @nn.nowrap
+    def zero_carry(self) -> ElmanRecurrentState:
+        return jnp.zeros((self.recurrent_size,))
+
 
 class Elman(GRAS):
     """
@@ -51,32 +54,25 @@ class Elman(GRAS):
     Paper: https://onlinelibrary.wiley.com/doi/abs/10.1207/s15516709cog1402_1.
     """
 
-    algebra: BinaryAlgebra
-    scan: Callable[
-        [
-            Callable[
-                [ElmanRecurrentStateWithReset, ElmanRecurrentStateWithReset],
-                ElmanRecurrentStateWithReset,
-            ],
-            ElmanRecurrentStateWithReset,
-            ElmanRecurrentStateWithReset,
-        ],
-        ElmanRecurrentStateWithReset,
-    ]
     recurrent_size: int
     hidden_size: int
-    W_h: nn.Linear
+    activation: Callable = jax.nn.tanh
+    use_equinox_init: bool = True
 
-    def __init__(self, recurrent_size, hidden_size, activation=jax.nn.tanh, *, key):
-        self.recurrent_size = recurrent_size
-        self.hidden_size = hidden_size
-        self.readout_dim = recurrent_size
-        keys = jax.random.split(key, 2)
-        self.algebra = Resettable(
-            ElmanSetAction(recurrent_size, activation=activation, key=keys[0])
+    def setup(self):
+        init = self.use_equinox_init
+        # forward_map input is raw embedding size (set in ResidualModel.map_in)
+        self.W_h = equinox_dense(
+            self.recurrent_size,
+            self.hidden_size,
+            use_bias=False,
+            use_equinox_init=init,
         )
-        self.scan = set_action_scan
-        self.W_h = nn.Linear(hidden_size, recurrent_size, use_bias=False, key=keys[1])
+        self.W_y = equinox_dense(
+            self.hidden_size,
+            self.recurrent_size,
+            use_equinox_init=init,
+        )
 
     @jaxtyped(typechecker=typechecker)
     def forward_map(
@@ -91,13 +87,25 @@ class Elman(GRAS):
         h: ElmanRecurrentStateWithReset,
         x: Input,
         key: Optional[Shaped[PRNGKeyArray, ""]] = None,
-    ) -> Float[Array, "{self.readout_dim}"]:
+    ) -> Float[Array, "{self.hidden_size}"]:
         z, reset_flag = h
         emb, start = x
-        return z
+        return self.W_y(z)
 
     @jaxtyped(typechecker=typechecker)
     def initialize_carry(
         self, key: Optional[Shaped[PRNGKeyArray, ""]] = None
     ) -> ElmanRecurrentStateWithReset:
         return self.algebra.initialize_carry(key)
+
+    @nn.nowrap
+    def zero_carry(self) -> ElmanRecurrentStateWithReset:
+        return self.algebra.zero_carry()
+
+    @staticmethod
+    def default_algebra(**kwargs):
+        return Resettable(ElmanSetAction(**kwargs))
+
+    @staticmethod
+    def default_scan():
+        return set_action_scan

@@ -1,16 +1,17 @@
 """Test all models on a simple 'remember the first input in the sequence' task"""
-import pytest
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
+import pytest
 
-from memax.equinox.train_utils import get_residual_memory_models
+from memax.equinox.train_utils import build_model
 
 
 def get_desired_accuracies():
     return {
-        "MLP": 0,
+        "Identity": 0,
         "Stack": 0,
         "Attention": 0.99,
         "Attention-RoPE": 0.99,
@@ -22,14 +23,16 @@ def get_desired_accuracies():
         "DeltaNet": 0.99,
         "DeltaProduct": 0.99,
         "GDN": 0.99,
+        "TTTL": 0.99,
+        "TTTL-RoPE": 0.99,
         "LRU": 0.99,
         "S6": 0.99,
         "LinearRNN": 0.99,
         "PSpherical": 0.99,
         "GRU": 0.99,
-        "IndRNN": 0.55,
-        "Elman": 0.55,
-        "ElmanReLU": 0.55,
+        "IndRNN": 0.90,
+        "Elman": 0.60,
+        "ElmanReLU": 0.60,
         "Spherical": 0.99,
         "NMax": 0.99,
         "MGU": 0.99,
@@ -42,11 +45,19 @@ def get_desired_accuracies():
 def ce_loss(y_hat, y):
     return -jnp.mean(jnp.sum(y * jax.nn.log_softmax(y_hat, axis=-1), axis=-1))
 
-@pytest.mark.parametrize("model_name, model", get_residual_memory_models(
-        4, 8, 4 - 1, key=jax.random.key(0), 
-    ).items())
+
+@pytest.mark.parametrize(
+    "model_name, model",
+    build_model(
+        3,
+        8,
+        3 - 1,
+        key=jax.random.key(0),
+        num_heads=2,
+    ).items(),
+)
 def test_initial_input(
-    model_name, model, epochs=2000, num_seqs=5, seq_len=20, input_dims=4
+    model_name, model, epochs=400, num_seqs=5, seq_len=20, input_dims=3
 ):
     timesteps = num_seqs * seq_len
     seq_idx = jnp.array([seq_len * i for i in range(num_seqs)])
@@ -109,7 +120,7 @@ def test_initial_input(
 
     _, r_metrics = rerror(model, key)
     assert (
-        r_metrics['accuracy']>= get_desired_accuracies()[model_name]
+        r_metrics["accuracy"] >= get_desired_accuracies()[model_name]
     ), f"Failed {model_name} (recurrent mode), expected {get_desired_accuracies()[model_name]}, got {r_metrics['accuracy']}"
 
 
