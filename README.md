@@ -36,6 +36,9 @@ We implement both linear and log-complexity recurrent models.
 | Independently Recurrent Neural Network | $O(n)$ | [[paper]](https://arxiv.org/abs/1803.04831) | [[code]](memax/equinox/set_actions/indrnn.py) |
 | Minimal Gated Unit | $O(n)$ | [[paper]](https://arxiv.org/abs/1603.09420) | [[code]](memax/equinox/set_actions/mgu.py) |
 | Long Short-Term Memory Unit | $O(n)$ | [[paper]](https://ieeexplore.ieee.org/abstract/document/6795963) | [[code]](memax/equinox/set_actions/lstm.py) |
+| Deep Echo State Network | $O(n)$ |  | [[code]](memax/equinox/reservoir/deep_esn.py) |
+| Structured Echo State Network | $O(n)$ | [[paper]](https://arxiv.org/abs/2006.07310) | [[code]](memax/equinox/reservoir/structured_esn.py) |
+| Parallel Echo State Network | $O(\log n)$ |  | [[code]](memax/equinox/reservoir/paralesn.py) |
 
 # Datasets
 We provide [datasets](memax/datasets) to test our recurrent models.
@@ -102,6 +105,23 @@ starts = jnp.zeros((B, T), dtype=bool)
 xs = jnp.zeros((B, T, F))
 hs_0 = add_batch_dim(model.initialize_carry(), B)
 hs, ys = filter_jit(filter_vmap(model))(hs_0, (xs, starts))
+```
+
+Reservoir models use the same sequence and reset interface, but deliberately
+return fixed reservoir features without adding a task-specific readout:
+
+```python
+reservoir = build_named_model(
+    model_name="DeepESN",
+    input=F,
+    hidden=64,
+    num_layers=2,
+    key=jax.random.key(1),
+)
+states, features = filter_jit(reservoir)(
+    reservoir.initialize_carry(), (xs, starts)
+)
+# Attach and train your own readout on `features`.
 ```
 
 ## Running Baselines

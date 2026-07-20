@@ -1,0 +1,240 @@
+"""Behavioral tests for the Equinox reservoir-computing cells."""
+
+import equinox as eqx
+import jax
+import jax.numpy as jnp
+import pytest
+
+from memax.equinox.reservoir import (
+    DeepESN,
+    ParalESN,
+    StructuredESN,
+    build_reservoir_model,
+)
+from memax.equinox.reservoir.paralesn import ParalESNCell
+from memax.equinox.reservoir.structured_esn import normalized_hadamard_transform
+from memax.equinox.train_utils import build_model, build_named_model
+
+
+def _models():
+    return (
+        DeepESN(
+            input_size=3,
+            hidden_size=8,
+            num_layers=2,
+            key=jax.random.key(0),
+        ),
+        StructuredESN(
+            input_size=3,
+            hidden_size=8,
+            num_layers=2,
+            key=jax.random.key(1),
+        ),
+        ParalESN(
+            input_size=3,
+            hidden_size=8,
+            num_layers=2,
+            key=jax.random.key(2),
+        ),
+        ParalESN(
+            input_size=3,
+            hidden_size=9,
+            num_layers=2,
+            concat=True,
+            key=jax.random.key(3),
+        ),
+    )
+
+
+@pytest.mark.parametrize("model", _models())
+def test_reservoir_contract_is_jittable(model):
+    timesteps = 7
+    x = jax.random.normal(jax.random.key(4), (timesteps, model.input_size))
+    start = jnp.array([True, False, False, True, False, False, False])
+
+    states, features = eqx.filter_jit(model)(
+        model.initialize_carry(), (x, start)
+    )
+
+    assert len(states) == model.num_layers
+    assert features.shape == (timesteps, model.readout_dim)
+    assert jnp.all(jnp.isfinite(features))
+
+
+@pytest.mark.parametrize("model", _models())
+def test_reset_matches_independent_sequences(model):
+    x = jax.random.normal(jax.random.key(5), (9, model.input_size))
+    packed_start = jnp.array(
+        [True, False, False, False, True, False, False, False, False]
+    )
+    _, packed_features = model(model.initialize_carry(), (x, packed_start))
+
+    _, first_features = model(
+        model.initialize_carry(), (x[:4], packed_start[:4])
+    )
+    _, second_features = model(
+        model.initialize_carry(), (x[4:], packed_start[4:])
+    )
+    independent_features = jnp.concatenate(
+        (first_features, second_features), axis=0
+    )
+
+    assert jnp.allclose(packed_features, independent_features, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("model", _models())
+def test_latest_state_continues_rollout(model):
+    x = jax.random.normal(jax.random.key(6), (8, model.input_size))
+    start = jnp.array([True, False, False, False, False, False, False, False])
+    _, full_features = model(model.initialize_carry(), (x, start))
+
+    first_states, first_features = model(
+        model.initialize_carry(), (x[:3], start[:3])
+    )
+    carry = model.latest_recurrent_state(first_states)
+    _, second_features = model(carry, (x[3:], start[3:]))
+    chunked_features = jnp.concatenate((first_features, second_features), axis=0)
+
+    assert jnp.allclose(full_features, chunked_features, atol=1e-5, rtol=1e-5)
+
+
+def test_paralesn_parallel_scan_matches_sequential_recurrence():
+    cell = ParalESNCell(input_size=3, hidden_size=7, key=jax.random.key(7))
+    x = jax.random.normal(jax.random.key(8), (11, 3))
+    start = jnp.array(
+        [True, False, False, False, True, False, False, False, False, True, False]
+    )
+    states, parallel_features = cell(cell.initialize_carry(), (x, start))
+
+    projected = jax.vmap(cell._project_input)(x)
+    transition = jax.lax.stop_gradient(cell.recurrent_kernel)
+
+    def step(carry, inputs):
+        projection, start_t = inputs
+        carry = jnp.where(start_t, jnp.zeros_like(carry), carry)
+        next_carry = transition * carry + projection
+        return next_carry, next_carry
+
+    _, sequential_states = jax.lax.scan(
+        step, jnp.zeros((7,), dtype=jnp.complex64), (projected, start)
+    )
+    sequential_features = jax.vmap(cell.mixer)(sequential_states)
+    (_, parallel_states), _ = states
+
+    assert jnp.allclose(parallel_states, sequential_states, atol=1e-5, rtol=1e-5)
+    assert jnp.allclose(parallel_features, sequential_features, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("model", _models())
+def test_only_reservoir_parameter_gradients_are_stopped(model):
+    x = jax.random.normal(jax.random.key(10), (6, 3))
+    start = jnp.array([True, False, False, False, False, False])
+
+    def loss_from_input(input_sequence):
+        _, features = model(model.initialize_carry(), (input_sequence, start))
+        return jnp.sum(features)
+
+    input_gradient = jax.grad(loss_from_input)(x)
+    model_gradient = eqx.filter_grad(
+        lambda current_model: jnp.sum(
+            current_model(current_model.initialize_carry(), (x, start))[1]
+        )
+    )(model)
+    parameter_gradients = [
+        leaf
+        for leaf in jax.tree.leaves(model_gradient)
+        if eqx.is_inexact_array(leaf)
+    ]
+
+    assert jnp.all(jnp.isfinite(input_gradient))
+    assert jnp.any(jnp.abs(input_gradient) > 0)
+    assert parameter_gradients
+    assert all(jnp.all(gradient == 0) for gradient in parameter_gradients)
+
+
+def test_trainable_cnn_receives_gradients_through_reservoir():
+    cnn = eqx.nn.Conv1d(
+        in_channels=1,
+        out_channels=3,
+        kernel_size=3,
+        padding=1,
+        key=jax.random.key(12),
+    )
+    reservoir = DeepESN(
+        input_size=3,
+        hidden_size=8,
+        num_layers=2,
+        key=jax.random.key(13),
+    )
+    signal = jax.random.normal(jax.random.key(14), (1, 9))
+    start = jnp.array([True, False, False, False, False, False, False, False, False])
+
+    def loss(current_cnn):
+        encoded = current_cnn(signal).T
+        _, features = reservoir(
+            reservoir.initialize_carry(), (encoded, start)
+        )
+        return jnp.sum(features)
+
+    cnn_gradient = eqx.filter_grad(loss)(cnn)
+    gradient_leaves = [
+        leaf
+        for leaf in jax.tree.leaves(cnn_gradient)
+        if eqx.is_inexact_array(leaf)
+    ]
+
+    assert gradient_leaves
+    assert any(jnp.any(jnp.abs(gradient) > 0) for gradient in gradient_leaves)
+
+
+@pytest.mark.parametrize(
+    ("model_name", "model_type", "expected_features"),
+    (
+        ("DeepESN", DeepESN, 16),
+        ("StructuredESN", StructuredESN, 16),
+        ("ParalESN", ParalESN, 8),
+    ),
+)
+def test_public_reservoir_builders(model_name, model_type, expected_features):
+    direct_model = build_reservoir_model(
+        model_name=model_name,
+        input_size=3,
+        hidden_size=8,
+        num_layers=2,
+        key=jax.random.key(15),
+    )
+    named_model = build_named_model(
+        model_name=model_name,
+        input=3,
+        hidden=8,
+        num_layers=2,
+        key=jax.random.key(16),
+    )
+    mapped_model = build_model(
+        input=3,
+        hidden=8,
+        num_layers=2,
+        models=[model_name],
+        key=jax.random.key(17),
+    )[model_name]
+
+    assert isinstance(direct_model, model_type)
+    assert isinstance(named_model, model_type)
+    assert isinstance(mapped_model, model_type)
+    assert direct_model.readout_dim == expected_features
+    assert not hasattr(direct_model, "readout_layer")
+
+
+def test_normalized_hadamard_transform_is_orthonormal():
+    x = jax.random.normal(jax.random.key(11), (3, 8))
+    transformed = normalized_hadamard_transform(x)
+
+    assert jnp.allclose(
+        jnp.linalg.norm(transformed, axis=-1),
+        jnp.linalg.norm(x, axis=-1),
+        atol=1e-6,
+        rtol=1e-6,
+    )
+    assert jnp.allclose(
+        normalized_hadamard_transform(transformed), x, atol=1e-6, rtol=1e-6
+    )

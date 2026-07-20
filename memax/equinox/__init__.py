@@ -4,5 +4,6 @@
 `memax.equinox.groups` provides the algebraic structures (semigroups, groups, etc.) used in GRAS.
 `memax.equinox.set_actions` provides set action-based recurrent layers (slow RNNs).
 `memax.equinox.semigroups` provides semigroup-based recurrent layers (fast RNNs).
+`memax.equinox.reservoir` provides fixed reservoir-computing recurrent cells.
 `memax.equinox.scans` provides scan functions for recurrent updates.
 """

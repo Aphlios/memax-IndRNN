@@ -8,12 +8,16 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import optax
-from beartype.typing import Any, Callable, Dict, Optional, Tuple
+from beartype.typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
 from jaxtyping import Array, Shaped
 
 from memax.equinox.groups import Module
 from memax.equinox.models.multihead_residual import MultiHeadResidualModel
 from memax.equinox.models.residual import ResidualModel
+from memax.equinox.reservoir.build import (
+    RESERVOIR_MODEL_NAMES,
+    build_reservoir_model,
+)
 from memax.equinox.semigroups.attn import Attention, AttentionSemigroup
 from memax.equinox.semigroups.delta import DeltaNet, DeltaNetSemigroup
 from memax.equinox.semigroups.deltap import DeltaProduct, DeltaProductSemigroup
@@ -277,7 +281,7 @@ def build_named_model(
     model_name: str,
     input: int,
     hidden: int,
-    output: int,
+    output: Optional[int] = None,
     num_layers: int = 2,
     *,
     key: jax.random.PRNGKey,
@@ -285,7 +289,27 @@ def build_named_model(
     model_kwargs: Optional[Dict] = None,
     num_heads: Optional[int] = None,
 ) -> Module:
-    """Build one residual-trunk model for a registered cell name."""
+    """Build one registered recurrent model.
+
+    ``DeepESN``, ``StructuredESN``, and ``ParalESN`` are returned directly as
+    fixed reservoir feature extractors without a task-specific readout. For
+    these models, ``output`` is unused and model-specific options can be passed
+    through ``model_kwargs``. Other names retain the residual-trunk behavior
+    and require ``output``.
+    """
+
+    if model_name in RESERVOIR_MODEL_NAMES:
+        reservoir_kwargs = dict((layer_kwargs or {}).get(model_name, {}))
+        reservoir_kwargs.update(model_kwargs or {})
+        return build_reservoir_model(
+            model_name=model_name,
+            input_size=input,
+            hidden_size=hidden,
+            num_layers=num_layers,
+            key=key,
+            model_kwargs=reservoir_kwargs,
+        )
+
     return build_model(
         input=input,
         hidden=hidden,
@@ -302,21 +326,27 @@ def build_named_model(
 def build_model(
     input: int,
     hidden: int,
-    output: int,
+    output: Optional[int] = None,
     num_layers: int = 2,
-    models: str = "all",
+    models: Union[str, Sequence[str]] = "all",
     *,
     key: jax.random.PRNGKey,
     layer_kwargs: Optional[Dict[str, Any]] = None,
     model_kwargs: Optional[Dict] = None,
     num_heads: Optional[int] = None,
 ) -> Dict[str, Module]:
-    """Build residual-trunk sequence models from registered memory cells.
+    """Build sequence models from registered memory cells.
 
     Each model stacks ``num_layers`` recurrent cells (semigroups or set actions) in a
     residual / DenseNet trunk with per-layer readout mixers. Pass ``num_heads`` to use
     :class:`~memax.equinox.models.multihead_residual.MultiHeadResidualModel`; omit it
     for :class:`~memax.equinox.models.residual.ResidualModel`.
+
+    The three reservoir names are available when explicitly requested. They
+    return reservoir features directly and do not use ``output`` or add a
+    readout. Their model-specific options belong under their entry in
+    ``layer_kwargs``. To preserve the historical meaning of ``models="all"``,
+    that value continues to build the residual-trunk registry only.
 
     Returns a name-to-module mapping. With ``models="all"``, every registered cell is
     included; otherwise only the requested names are built.
@@ -482,5 +512,34 @@ def build_model(
         return ResidualModel(**trunk_kwargs)
 
     if models == "all":
-        return {name: make_trunk(fn) for name, fn in layers.items()}
-    return {name: make_trunk(layers[name]) for name in models}
+        requested_models = list(layers)
+    elif isinstance(models, str):
+        requested_models = [models]
+    else:
+        requested_models = list(models)
+
+    available_models = set(layers) | set(RESERVOIR_MODEL_NAMES)
+    unknown_models = set(requested_models) - available_models
+    if unknown_models:
+        unknown = ", ".join(sorted(unknown_models))
+        available = ", ".join(sorted(available_models))
+        raise KeyError(f"unknown model(s) {unknown}; available models: {available}")
+
+    built_models = {}
+    for name in requested_models:
+        if name in RESERVOIR_MODEL_NAMES:
+            built_models[name] = build_reservoir_model(
+                model_name=name,
+                input_size=input,
+                hidden_size=hidden,
+                num_layers=num_layers,
+                key=key,
+                model_kwargs=layer_kwargs.get(name, {}),
+            )
+        else:
+            if output is None:
+                raise ValueError(
+                    f"output is required when building residual-trunk model {name!r}"
+                )
+            built_models[name] = make_trunk(layers[name])
+    return built_models
