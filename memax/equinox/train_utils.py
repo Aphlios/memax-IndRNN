@@ -16,6 +16,7 @@ from memax.equinox.models.multihead_residual import MultiHeadResidualModel
 from memax.equinox.models.residual import ResidualModel
 from memax.equinox.reservoir.build import (
     RESERVOIR_MODEL_NAMES,
+    RESERVOIR_MODEL_TYPES,
     build_reservoir_model,
 )
 from memax.equinox.semigroups.attn import Attention, AttentionSemigroup
@@ -37,6 +38,7 @@ from memax.equinox.set_actions.elman import Elman
 from memax.equinox.set_actions.gru import GRU
 from memax.equinox.set_actions.indrnn import IndRNN
 from memax.equinox.set_actions.lstm import LSTM
+from memax.equinox.set_actions.mlp import MLP
 from memax.equinox.set_actions.mgu import MGU
 from memax.equinox.set_actions.spherical import Spherical
 
@@ -74,6 +76,35 @@ def accuracy(
     y_hat: Shaped[Array, "Batch ... Classes"], y: Shaped[Array, "Batch ... Classes"]
 ) -> Shaped[Array, "1"]:
     return jnp.mean(jnp.argmax(y, axis=-1) == jnp.argmax(y_hat, axis=-1))
+
+
+def trainable_filter_spec(model: Module):
+    """Return an Equinox filter spec honoring frozen reservoir subtrees.
+
+    A false spec is assigned to every leaf of a reservoir constructed with
+    ``trainable=False``. This keeps those arrays out of optimizer state and
+    prevents decoupled weight decay (for example AdamW) from changing them.
+    """
+
+    def is_frozen_reservoir(node):
+        return isinstance(node, RESERVOIR_MODEL_TYPES) and not node.trainable
+
+    def filter_node(node):
+        if is_frozen_reservoir(node):
+            return jax.tree.map(lambda _: False, node)
+        return eqx.is_inexact_array(node)
+
+    return jax.tree.map(
+        filter_node,
+        model,
+        is_leaf=is_frozen_reservoir,
+    )
+
+
+def trainable_parameters(model: Module):
+    """Filter a model down to parameters that should be optimized."""
+
+    return eqx.filter(model, trainable_filter_spec(model))
 
 
 def loss_regress_terminal_output(
@@ -172,10 +203,11 @@ def update_model(
     key=None,
 ) -> Tuple[Module, optax.OptState, Dict[str, Array]]:
     """Update the model using the given loss function and optimizer."""
+    filter_spec = trainable_filter_spec(model)
     grads, loss_info = eqx.filter_grad(loss_fn, has_aux=True)(model, x, y, key)
-    updates, opt_state = opt.update(
-        grads, opt_state, params=eqx.filter(model, eqx.is_inexact_array)
-    )
+    grads = eqx.filter(grads, filter_spec)
+    params = eqx.filter(model, filter_spec)
+    updates, opt_state = opt.update(grads, opt_state, params=params)
     model = eqx.apply_updates(model, updates)
     return model, opt_state, loss_info
 
@@ -359,6 +391,11 @@ def build_model(
             recurrent_size=recurrent_size,
             key=key,
             **layer_kwargs.get("Identity", {}),
+        ),
+        "MLP": lambda recurrent_size, key: MLP(
+            recurrent_size=recurrent_size,
+            key=key,
+            **layer_kwargs.get("MLP", {}),
         ),
         # semigroups
         "NMax": lambda recurrent_size, key: NMax(

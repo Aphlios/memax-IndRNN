@@ -13,3 +13,9 @@ def stop_parameter_gradient(parameter):
     """
 
     return jax.tree.map(jax.lax.stop_gradient, parameter)
+
+
+def reservoir_parameter(parameter, trainable: bool):
+    """Return a reservoir parameter with the requested gradient behavior."""
+
+    return parameter if trainable else stop_parameter_gradient(parameter)

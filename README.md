@@ -124,6 +124,35 @@ states, features = filter_jit(reservoir)(
 # Attach and train your own readout on `features`.
 ```
 
+Reservoir parameters are frozen by default. For ablations that train the
+recurrent, input, bias, and internal mixer parameters, pass `trainable=True`:
+
+```python
+trainable_reservoir = build_named_model(
+    model_name="DeepESN",
+    input=F,
+    hidden=64,
+    num_layers=2,
+    model_kwargs={"trainable": True},
+    key=jax.random.key(2),
+)
+```
+
+When constructing an optimizer directly, initialize it with
+`trainable_parameters(model)` from `memax.equinox.train_utils`. The provided
+training loop already does this, so frozen reservoirs are also protected from
+decoupled AdamW weight decay.
+
+The `MLP` model is a trainable memory-free control. It applies a residual MLP
+independently at every timestep through the same GRAS scan interface:
+
+```python
+mlp = build_named_model(
+    model_name="MLP", input=F, hidden=64, output=4, num_layers=2,
+    key=jax.random.key(3),
+)
+```
+
 ## Running Baselines
 You can compare various recurrent models on our datasets with a single command
 ```bash

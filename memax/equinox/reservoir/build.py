@@ -17,6 +17,7 @@ _RESERVOIR_MODELS = {
     "StructuredESN": StructuredESN,
     "ParalESN": ParalESN,
 }
+RESERVOIR_MODEL_TYPES = tuple(_RESERVOIR_MODELS.values())
 
 
 def build_reservoir_model(
@@ -28,7 +29,7 @@ def build_reservoir_model(
     key: PRNGKeyArray,
     model_kwargs: Optional[Dict[str, Any]] = None,
 ) -> Module:
-    """Build one fixed reservoir model without a task-specific readout.
+    """Build one reservoir model without a task-specific readout.
 
     Args:
         model_name: One of ``DeepESN``, ``StructuredESN``, or ``ParalESN``.
@@ -38,7 +39,8 @@ def build_reservoir_model(
         num_layers: Number of stacked reservoir layers.
         key: JAX random key used to initialize the fixed reservoir.
         model_kwargs: Model-specific options such as ``spectral_radius``,
-            ``reservoir_scaling``, reservoir configs, or ``concat``.
+            ``reservoir_scaling``, reservoir configs, ``concat``, or
+            ``trainable``. Reservoir parameters are frozen by default.
     """
 
     if model_name not in _RESERVOIR_MODELS:

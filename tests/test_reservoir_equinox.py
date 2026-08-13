@@ -3,6 +3,7 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import optax
 import pytest
 
 from memax.equinox.reservoir import (
@@ -13,7 +14,12 @@ from memax.equinox.reservoir import (
 )
 from memax.equinox.reservoir.paralesn import ParalESNCell
 from memax.equinox.reservoir.structured_esn import normalized_hadamard_transform
-from memax.equinox.train_utils import build_model, build_named_model
+from memax.equinox.train_utils import (
+    build_model,
+    build_named_model,
+    trainable_filter_spec,
+    trainable_parameters,
+)
 
 
 def _models():
@@ -150,6 +156,107 @@ def test_only_reservoir_parameter_gradients_are_stopped(model):
     assert jnp.any(jnp.abs(input_gradient) > 0)
     assert parameter_gradients
     assert all(jnp.all(gradient == 0) for gradient in parameter_gradients)
+
+
+@pytest.mark.parametrize("model_name", ("DeepESN", "StructuredESN", "ParalESN"))
+def test_trainable_reservoir_parameters_receive_gradients_and_updates(model_name):
+    model = build_reservoir_model(
+        model_name=model_name,
+        input_size=3,
+        hidden_size=8,
+        num_layers=2,
+        key=jax.random.key(18),
+        model_kwargs={"trainable": True},
+    )
+    x = jax.random.normal(jax.random.key(19), (6, 3))
+    start = jnp.array([True, False, False, False, False, False])
+
+    def loss(current_model):
+        _, features = current_model(
+            current_model.initialize_carry(), (x, start)
+        )
+        return jnp.sum(features)
+
+    gradients = eqx.filter_grad(loss)(model)
+    gradient_leaves = [
+        leaf
+        for leaf in jax.tree.leaves(gradients)
+        if eqx.is_inexact_array(leaf)
+    ]
+    updates = jax.tree.map(
+        lambda gradient: None if gradient is None else -1e-3 * gradient,
+        gradients,
+    )
+    updated_model = eqx.apply_updates(model, updates)
+    parameter_leaves = [
+        leaf for leaf in jax.tree.leaves(model) if eqx.is_inexact_array(leaf)
+    ]
+    updated_leaves = [
+        leaf
+        for leaf in jax.tree.leaves(updated_model)
+        if eqx.is_inexact_array(leaf)
+    ]
+
+    assert model.trainable
+    assert gradient_leaves
+    assert all(jnp.all(jnp.isfinite(gradient)) for gradient in gradient_leaves)
+    assert any(jnp.any(gradient != 0) for gradient in gradient_leaves)
+    assert any(
+        jnp.any(before != after)
+        for before, after in zip(parameter_leaves, updated_leaves)
+    )
+
+
+@pytest.mark.parametrize("model_name", ("DeepESN", "StructuredESN", "ParalESN"))
+def test_trainable_flag_does_not_change_initial_forward_values(model_name):
+    kwargs = dict(
+        model_name=model_name,
+        input_size=3,
+        hidden_size=8,
+        num_layers=2,
+        key=jax.random.key(20),
+    )
+    frozen = build_reservoir_model(**kwargs)
+    trainable = build_reservoir_model(
+        **kwargs, model_kwargs={"trainable": True}
+    )
+    x = jax.random.normal(jax.random.key(21), (6, 3))
+    start = jnp.array([True, False, False, True, False, False])
+
+    _, frozen_features = frozen(frozen.initialize_carry(), (x, start))
+    _, trainable_features = trainable(
+        trainable.initialize_carry(), (x, start)
+    )
+
+    assert not frozen.trainable
+    assert trainable.trainable
+    assert jnp.allclose(frozen_features, trainable_features)
+
+
+def test_default_frozen_reservoir_is_excluded_from_adamw():
+    model = DeepESN(
+        input_size=3,
+        hidden_size=8,
+        num_layers=2,
+        key=jax.random.key(22),
+    )
+    x = jax.random.normal(jax.random.key(23), (6, 3))
+    start = jnp.array([True, False, False, False, False, False])
+    loss = lambda current_model: jnp.sum(
+        current_model(current_model.initialize_carry(), (x, start))[1]
+    )
+    gradients = eqx.filter_grad(loss)(model)
+    gradients = eqx.filter(gradients, trainable_filter_spec(model))
+    optimizer = optax.adamw(1e-3)
+    parameters = trainable_parameters(model)
+    optimizer_state = optimizer.init(parameters)
+    updates, _ = optimizer.update(
+        gradients, optimizer_state, params=parameters
+    )
+    updated_model = eqx.apply_updates(model, updates)
+
+    assert not [leaf for leaf in jax.tree.leaves(parameters) if eqx.is_array(leaf)]
+    assert eqx.tree_equal(model, updated_model)
 
 
 def test_trainable_cnn_receives_gradients_through_reservoir():

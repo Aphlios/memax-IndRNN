@@ -6,6 +6,7 @@ do not include a task-specific readout layer.
 
 from memax.equinox.reservoir.build import (
     RESERVOIR_MODEL_NAMES,
+    RESERVOIR_MODEL_TYPES,
     build_reservoir_model,
 )
 from memax.equinox.reservoir.deep_esn import DeepESN
@@ -21,6 +22,7 @@ __all__ = [
     "MixerConfig",
     "ParalESN",
     "RESERVOIR_MODEL_NAMES",
+    "RESERVOIR_MODEL_TYPES",
     "ReservoirConfig",
     "StructuredESN",
     "build_reservoir_model",

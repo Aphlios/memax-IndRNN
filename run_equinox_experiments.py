@@ -18,6 +18,7 @@ from memax.equinox.train_utils import (
     build_model,
     loss_classify_terminal_output,
     loss_regress_terminal_output,
+    trainable_parameters,
     update_model,
 )
 
@@ -123,7 +124,7 @@ def run_test(config, name, model, dataset, loss_fn):
         optax.zero_nans(),
         optax.adamw(lr_schedule),
     )
-    opt_state = opt.init(eqx.filter(model, eqx.is_inexact_array))
+    opt_state = opt.init(trainable_parameters(model))
     key = jax.random.PRNGKey(config.seed)
 
     for epoch in range(config.num_epochs):

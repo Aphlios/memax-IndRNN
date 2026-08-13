@@ -1,9 +1,9 @@
 """Parallel Echo State Network recurrent cells.
 
-This adapts ParalESN's fixed complex diagonal reservoirs to memax's GRAS
-contract. The temporal recurrence is evaluated with an associative scan. The
-fixed nonlinear convolutional mixer is part of the reservoir; no trainable
-task-specific readout is included.
+This adapts ParalESN's complex diagonal reservoirs to memax's GRAS contract.
+The temporal recurrence is evaluated with an associative scan. Reservoir and
+nonlinear convolutional-mixer arrays are frozen by default and become
+trainable with ``trainable=True``; no task-specific readout is included.
 """
 
 from collections.abc import Mapping, Sequence
@@ -18,7 +18,7 @@ from jaxtyping import Array, PRNGKeyArray, Shaped
 
 from memax.equinox.gras import GRAS
 from memax.equinox.groups import BinaryAlgebra, Module, Resettable, Semigroup
-from memax.equinox.reservoir._frozen import stop_parameter_gradient
+from memax.equinox.reservoir._frozen import reservoir_parameter
 from memax.equinox.scans import semigroup_scan
 from memax.mtypes import Input
 
@@ -162,15 +162,17 @@ class ParallelReservoirSemigroup(Semigroup):
 
 
 class ParallelMixer(eqx.Module):
-    """Fixed local convolution over reservoir units followed by real ``tanh``."""
+    """Local convolution followed by real ``tanh``, frozen by default."""
 
     weight: Array
     bias: Array
     kernel_size: int
+    trainable: bool
 
     def __init__(
         self,
         config: Optional[Union[MixerConfig, Mapping[str, Any]]] = None,
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -189,6 +191,7 @@ class ParallelMixer(eqx.Module):
             * jnp.asarray(config.bias_scaling, dtype=jnp.float32)
         )
         self.kernel_size = int(config.kernel_size)
+        self.trainable = bool(trainable)
 
     def __call__(self, x: Array) -> Array:
         if x.ndim != 1:
@@ -200,13 +203,13 @@ class ParallelMixer(eqx.Module):
             self.kernel_size
         )[None, :]
         windows = padded[indices]
-        weight = stop_parameter_gradient(self.weight)
-        bias = stop_parameter_gradient(self.bias)
+        weight = reservoir_parameter(self.weight, self.trainable)
+        bias = reservoir_parameter(self.bias, self.trainable)
         return jnp.tanh((windows @ weight + bias).real)
 
 
 class ParalESNCell(GRAS):
-    """One fixed ParalESN cell evaluated by an associative temporal scan."""
+    """One ParalESN cell, frozen by default, using an associative scan."""
 
     algebra: BinaryAlgebra
     scan: object
@@ -218,6 +221,7 @@ class ParalESNCell(GRAS):
     input_size: int
     hidden_size: int
     leaky: float
+    trainable: bool
 
     def __init__(
         self,
@@ -227,6 +231,7 @@ class ParalESNCell(GRAS):
             Union[ReservoirConfig, Mapping[str, Any]]
         ] = None,
         mixer_config: Optional[Union[MixerConfig, Mapping[str, Any]]] = None,
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -242,6 +247,7 @@ class ParalESNCell(GRAS):
         self.hidden_size = int(hidden_size)
         self.readout_dim = int(hidden_size)
         self.leaky = float(reservoir_config.leaky)
+        self.trainable = bool(trainable)
         self.recurrent_kernel = _init_recurrent_kernel(
             recurrent_key, hidden_size, reservoir_config
         )
@@ -260,19 +266,21 @@ class ParalESNCell(GRAS):
             _complex_uniform(bias_key, (hidden_size,))
             * jnp.asarray(reservoir_config.bias_scaling, dtype=jnp.float32)
         )
-        self.mixer = ParallelMixer(mixer_config, key=mixer_key)
+        self.mixer = ParallelMixer(
+            mixer_config, trainable=trainable, key=mixer_key
+        )
         self.algebra = Resettable(ParallelReservoirSemigroup(hidden_size))
         self.scan = semigroup_scan
 
     def _project_input(self, x: Array) -> Array:
         x = x.astype(jnp.complex64)
         if self.input_kernel is None:
-            scaling = stop_parameter_gradient(self.input_scaling)
+            scaling = reservoir_parameter(self.input_scaling, self.trainable)
             projected = scaling * jnp.roll(x, shift=1, axis=-1)
         else:
-            kernel = stop_parameter_gradient(self.input_kernel)
+            kernel = reservoir_parameter(self.input_kernel, self.trainable)
             projected = kernel @ x
-        bias = stop_parameter_gradient(self.bias)
+        bias = reservoir_parameter(self.bias, self.trainable)
         return self.leaky * (projected + bias)
 
     def forward_map(
@@ -280,7 +288,7 @@ class ParalESNCell(GRAS):
     ):
         del key
         embedding, start = x
-        transition = stop_parameter_gradient(self.recurrent_kernel)
+        transition = reservoir_parameter(self.recurrent_kernel, self.trainable)
         return (transition, self._project_input(embedding)), start
 
     def backward_map(
@@ -295,7 +303,7 @@ class ParalESNCell(GRAS):
 
 
 class ParalESN(Module):
-    """A stack of fixed parallel ESN cells with no task-specific readout.
+    """A stack of parallel ESN cells, frozen by default, without a readout.
 
     With ``concat=False``, the last layer is returned. With ``concat=True``,
     ``hidden_size`` is split across layers and all layer outputs are
@@ -309,6 +317,7 @@ class ParalESN(Module):
     num_layers: int
     concat: bool
     readout_dim: int
+    trainable: bool
 
     def __init__(
         self,
@@ -326,6 +335,7 @@ class ParalESN(Module):
         inter_mixer_config: Optional[
             Union[MixerConfig, Mapping[str, Any]]
         ] = None,
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -356,6 +366,7 @@ class ParalESN(Module):
         self.num_layers = int(num_layers)
         self.concat = bool(concat)
         self.readout_dim = int(hidden_size)
+        self.trainable = bool(trainable)
         if concat:
             later_size = hidden_size // num_layers
             first_size = later_size + hidden_size % num_layers
@@ -375,6 +386,7 @@ class ParalESN(Module):
                         reservoir_config if index == 0 else inter_reservoir_config
                     ),
                     mixer_config=mixer_config if index == 0 else inter_mixer_config,
+                    trainable=trainable,
                     key=layer_keys[index],
                 )
             )

@@ -1,7 +1,8 @@
 """Structured reservoir computing with fast Walsh-Hadamard transforms.
 
-This implements the fixed structured reservoir of Dong et al., NeurIPS 2020
-(https://arxiv.org/abs/2006.07310). No task-specific readout is included.
+This implements the structured reservoir of Dong et al., NeurIPS 2020
+(https://arxiv.org/abs/2006.07310). Its arrays are frozen by default and become
+trainable with ``trainable=True``. No task-specific readout is included.
 """
 
 from collections.abc import Sequence
@@ -13,7 +14,7 @@ from jaxtyping import Array, PRNGKeyArray, Shaped
 
 from memax.equinox.gras import GRAS
 from memax.equinox.groups import BinaryAlgebra, Module, Resettable, SetAction
-from memax.equinox.reservoir._frozen import stop_parameter_gradient
+from memax.equinox.reservoir._frozen import reservoir_parameter
 from memax.equinox.scans import set_action_scan
 from memax.mtypes import Input
 
@@ -51,7 +52,7 @@ def normalized_hadamard_transform(x: Array) -> Array:
 
 
 class StructuredESNSetAction(SetAction):
-    """One fixed structured-reservoir transition."""
+    """One structured-reservoir transition, frozen by default."""
 
     diagonals: tuple[Array, Array, Array]
     bias: Array
@@ -62,6 +63,7 @@ class StructuredESNSetAction(SetAction):
     input_scaling: float
     leaky_rate: float
     activation: str
+    trainable: bool
 
     def __init__(
         self,
@@ -72,6 +74,7 @@ class StructuredESNSetAction(SetAction):
         bias_scaling: float = 0.0,
         leaky_rate: float = 0.2,
         activation: str = "erf",
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -94,6 +97,7 @@ class StructuredESNSetAction(SetAction):
         self.input_scaling = float(input_scaling)
         self.leaky_rate = float(leaky_rate)
         self.activation = activation
+        self.trainable = bool(trainable)
 
         diagonal_key, bias_key = jax.random.split(key)
         diagonal_keys = jax.random.split(diagonal_key, 3)
@@ -115,7 +119,7 @@ class StructuredESNSetAction(SetAction):
             )
         )
         transformed = padded
-        for diagonal in stop_parameter_gradient(self.diagonals):
+        for diagonal in reservoir_parameter(self.diagonals, self.trainable):
             transformed = normalized_hadamard_transform(diagonal * transformed)
         return jnp.sqrt(
             jnp.asarray(self.transform_size, dtype=transformed.dtype)
@@ -123,7 +127,7 @@ class StructuredESNSetAction(SetAction):
 
     def __call__(self, carry: Array, input: Array) -> Array:
         projected = self._structured_projection(carry, input)
-        bias = stop_parameter_gradient(self.bias)
+        bias = reservoir_parameter(self.bias, self.trainable)
         if self.activation == "erf":
             activated = jax.lax.erf(projected + bias)
         else:
@@ -157,6 +161,7 @@ class StructuredESNCell(GRAS):
         bias_scaling: float = 0.0,
         leaky_rate: float = 0.2,
         activation: str = "erf",
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -172,6 +177,7 @@ class StructuredESNCell(GRAS):
                 bias_scaling=bias_scaling,
                 leaky_rate=leaky_rate,
                 activation=activation,
+                trainable=trainable,
                 key=key,
             )
         )
@@ -195,7 +201,7 @@ class StructuredESNCell(GRAS):
 
 
 class StructuredESN(Module):
-    """One or more structured ESN cells with no readout layer.
+    """One or more structured ESN cells, frozen by default, without a readout.
 
     Features from all layers are concatenated along the final axis.
     """
@@ -205,6 +211,7 @@ class StructuredESN(Module):
     hidden_size: int
     num_layers: int
     readout_dim: int
+    trainable: bool
 
     def __init__(
         self,
@@ -216,6 +223,7 @@ class StructuredESN(Module):
         bias_scaling: float = 0.0,
         leaky_rate: float = 0.2,
         activation: str = "erf",
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -225,6 +233,7 @@ class StructuredESN(Module):
         self.hidden_size = int(hidden_size)
         self.num_layers = int(num_layers)
         self.readout_dim = int(hidden_size * num_layers)
+        self.trainable = bool(trainable)
 
         layer_keys = jax.random.split(key, num_layers)
         self.layers = tuple(
@@ -236,6 +245,7 @@ class StructuredESN(Module):
                 bias_scaling=bias_scaling,
                 leaky_rate=leaky_rate,
                 activation=activation,
+                trainable=trainable,
                 key=layer_keys[index],
             )
             for index in range(num_layers)

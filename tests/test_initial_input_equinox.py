@@ -12,6 +12,7 @@ from memax.equinox.train_utils import build_model
 def get_desired_accuracies():
     return {
         "Identity": 0,
+        "MLP": 0,
         "Stack": 0,
         "Attention": 0.99,
         "Attention-RoPE": 0.99,

@@ -1,7 +1,8 @@
 """Deep Echo State Network recurrent cells.
 
-Reservoir parameter gradients are stopped while gradients still flow through
-the reservoir to an upstream encoder. No readout is included;
+Reservoir parameter gradients are stopped by default while gradients still
+flow through the reservoir to an upstream encoder. Pass ``trainable=True`` to
+optimize the reservoir arrays. No readout is included;
 :class:`DeepESN` returns the concatenated states of all layers.
 """
 
@@ -14,7 +15,7 @@ from jaxtyping import Array, PRNGKeyArray, Shaped
 
 from memax.equinox.gras import GRAS
 from memax.equinox.groups import BinaryAlgebra, Module, Resettable, SetAction
-from memax.equinox.reservoir._frozen import stop_parameter_gradient
+from memax.equinox.reservoir._frozen import reservoir_parameter
 from memax.equinox.scans import set_action_scan
 from memax.mtypes import Input
 
@@ -76,7 +77,7 @@ def esn_input_init(
 
 
 class ESNSetAction(SetAction):
-    """One fixed leaky ESN state transition."""
+    """One leaky ESN transition, frozen unless ``trainable=True``."""
 
     recurrent_kernel: Array
     input_kernel: Array
@@ -85,6 +86,7 @@ class ESNSetAction(SetAction):
     hidden_size: int
     leaky_rate: float
     activation: Callable[[Array], Array]
+    trainable: bool
 
     def __init__(
         self,
@@ -95,6 +97,7 @@ class ESNSetAction(SetAction):
         input_scaling: float = 0.1,
         density: float = 0.04,
         activation: Callable[[Array], Array] = jax.nn.tanh,
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -106,6 +109,7 @@ class ESNSetAction(SetAction):
         self.hidden_size = int(hidden_size)
         self.leaky_rate = float(leaky_rate)
         self.activation = activation
+        self.trainable = bool(trainable)
 
         reservoir_key, input_key, bias_key = jax.random.split(key, 3)
         self.recurrent_kernel = esn_reservoir_init(
@@ -120,9 +124,9 @@ class ESNSetAction(SetAction):
         self.bias = esn_input_init(bias_key, (hidden_size,), input_scaling)
 
     def __call__(self, carry: Array, input: Array) -> Array:
-        recurrent_kernel = stop_parameter_gradient(self.recurrent_kernel)
-        input_kernel = stop_parameter_gradient(self.input_kernel)
-        bias = stop_parameter_gradient(self.bias)
+        recurrent_kernel = reservoir_parameter(self.recurrent_kernel, self.trainable)
+        input_kernel = reservoir_parameter(self.input_kernel, self.trainable)
+        bias = reservoir_parameter(self.bias, self.trainable)
         candidate = self.activation(
             recurrent_kernel @ carry + input_kernel @ input + bias
         )
@@ -152,6 +156,7 @@ class ESNCell(GRAS):
         input_scaling: float = 0.1,
         density: float = 0.04,
         activation: Callable[[Array], Array] = jax.nn.tanh,
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -167,6 +172,7 @@ class ESNCell(GRAS):
                 input_scaling=input_scaling,
                 density=density,
                 activation=activation,
+                trainable=trainable,
                 key=key,
             )
         )
@@ -190,7 +196,7 @@ class ESNCell(GRAS):
 
 
 class DeepESN(Module):
-    """A stack of fixed ESN cells with no readout layer.
+    """A stack of ESN cells, frozen by default, with no readout layer.
 
     The returned feature at every timestep is the concatenation of every
     layer's reservoir state and therefore has size ``hidden_size * num_layers``.
@@ -201,6 +207,7 @@ class DeepESN(Module):
     hidden_size: int
     num_layers: int
     readout_dim: int
+    trainable: bool
 
     def __init__(
         self,
@@ -212,6 +219,7 @@ class DeepESN(Module):
         input_scaling: float = 0.1,
         density: float = 0.04,
         activation: Callable[[Array], Array] = jax.nn.tanh,
+        trainable: bool = False,
         *,
         key: PRNGKeyArray,
     ):
@@ -223,6 +231,7 @@ class DeepESN(Module):
         self.hidden_size = int(hidden_size)
         self.num_layers = int(num_layers)
         self.readout_dim = int(hidden_size * num_layers)
+        self.trainable = bool(trainable)
 
         layer_keys = jax.random.split(key, num_layers)
         self.layers = tuple(
@@ -234,6 +243,7 @@ class DeepESN(Module):
                 input_scaling=input_scaling,
                 density=density,
                 activation=activation,
+                trainable=trainable,
                 key=layer_keys[index],
             )
             for index in range(num_layers)
