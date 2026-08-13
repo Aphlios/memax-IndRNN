@@ -79,25 +79,27 @@ def accuracy(
 
 
 def trainable_filter_spec(model: Module):
-    """Return an Equinox filter spec honoring frozen reservoir subtrees.
+    """Return an Equinox filter spec honoring explicitly frozen subtrees.
 
-    A false spec is assigned to every leaf of a reservoir constructed with
-    ``trainable=False``. This keeps those arrays out of optimizer state and
-    prevents decoupled weight decay (for example AdamW) from changing them.
+    A false spec is assigned to every leaf of a reservoir or LRU constructed
+    with ``trainable=False``. This keeps those arrays out of optimizer state
+    and prevents decoupled weight decay (for example AdamW) from changing them.
     """
 
-    def is_frozen_reservoir(node):
-        return isinstance(node, RESERVOIR_MODEL_TYPES) and not node.trainable
+    def is_frozen_module(node):
+        is_reservoir = isinstance(node, RESERVOIR_MODEL_TYPES)
+        is_lru = isinstance(node, LRU)
+        return (is_reservoir or is_lru) and not node.trainable
 
     def filter_node(node):
-        if is_frozen_reservoir(node):
+        if is_frozen_module(node):
             return jax.tree.map(lambda _: False, node)
         return eqx.is_inexact_array(node)
 
     return jax.tree.map(
         filter_node,
         model,
-        is_leaf=is_frozen_reservoir,
+        is_leaf=is_frozen_module,
     )
 
 

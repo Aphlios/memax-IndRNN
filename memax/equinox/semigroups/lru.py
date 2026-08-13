@@ -1,4 +1,6 @@
-# https://github.com/NicolasZucchet/minimal-LRU/blob/main/lru/model.py
+"""Linear Recurrent Unit with optional parameter freezing."""
+
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from beartype import beartype as typechecker
@@ -55,10 +57,10 @@ class LRUSemigroup(Semigroup):
 
 
 class LRU(GRAS):
-    """
-    The Linear Recurrent Unit from https://arxiv.org/abs/2303.06349.
+    """The Linear Recurrent Unit from https://arxiv.org/abs/2303.06349.
 
-    You might want to use this as a building block for a more complex model.
+    Parameters are trainable by default. With ``trainable=False``, their
+    gradients are stopped while gradients still propagate to layer inputs.
     """
 
     algebra: BinaryAlgebra
@@ -74,6 +76,7 @@ class LRU(GRAS):
         LRURecurrentStateWithReset,
     ]
     gamma_log: Float[Array, "Recurrent"]
+    trainable: bool = eqx.field(static=True)
     B_re: Float[Array, "Recurrent Hidden"]
     B_im: Float[Array, "Recurrent Hidden"]
     C_re: Float[Array, "Hidden Recurrent"]
@@ -81,7 +84,6 @@ class LRU(GRAS):
     D: Float[Array, "Hidden"]
     nu_log: Float[Array, "Recurrent"]
     theta_log: Float[Array, "Recurrent"]
-    gamma_log: Float[Array, "Recurrent"]
 
     hidden_size: int  # input and output dimensions
     recurrent_size: int  # hidden state dimension
@@ -89,11 +91,12 @@ class LRU(GRAS):
     r_max: float = 1.0
     max_phase: float = jnp.pi * 2
 
-    def __init__(self, recurrent_size, hidden_size, key):
+    def __init__(self, recurrent_size, hidden_size, key, trainable: bool = True):
         keys = jax.random.split(key, 7)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = hidden_size
+        self.trainable = bool(trainable)
         unwrapped = LRUSemigroup(recurrent_size)
         self.algebra = Resettable(unwrapped)
         self.scan = semigroup_scan
@@ -129,15 +132,24 @@ class LRU(GRAS):
 
         self.gamma_log = jnp.log(jnp.sqrt(1 - jnp.abs(self.diag_lambda()) ** 2))
 
+    def parameter(self, value: Array) -> Array:
+        """Return a parameter with the configured gradient behavior."""
+
+        return value if self.trainable else jax.lax.stop_gradient(value)
+
     @jaxtyped(typechecker=typechecker)
     def diag_lambda(self) -> Complex[Array, "Recurrent"]:
-        return jnp.exp(-jnp.exp(self.nu_log) + 1j * jnp.exp(self.theta_log))
+        nu_log = self.parameter(self.nu_log)
+        theta_log = self.parameter(self.theta_log)
+        return jnp.exp(-jnp.exp(nu_log) + 1j * jnp.exp(theta_log))
 
     @jaxtyped(typechecker=typechecker)
     def forward_map(self, x: Input, key: Optional[Shaped[PRNGKeyArray, ""]] = None):
         emb, start = x
-        B_norm = jax.lax.complex(self.B_re, self.B_im) * jnp.expand_dims(
-            jnp.exp(self.gamma_log), axis=-1
+        B_norm = jax.lax.complex(
+            self.parameter(self.B_re), self.parameter(self.B_im)
+        ) * jnp.expand_dims(
+            jnp.exp(self.parameter(self.gamma_log)), axis=-1
         )
         Bu = B_norm @ emb.astype(jnp.complex64)
         return (self.diag_lambda(), Bu), start
@@ -148,12 +160,14 @@ class LRU(GRAS):
         h: LRURecurrentStateWithReset,
         x: Input,
         key: Optional[Shaped[PRNGKeyArray, ""]] = None,
-    ) -> Float[Array, "{self.recurrent_size}"]:
+    ) -> Float[Array, "{self.hidden_size}"]:
         state, reset_flag = h
         emb, start = x
         lambdas, lambda_x_Bu = state
-        C = jax.lax.complex(self.C_re, self.C_im)
-        out = (C @ lambda_x_Bu).real + self.D * emb
+        C = jax.lax.complex(
+            self.parameter(self.C_re), self.parameter(self.C_im)
+        )
+        out = (C @ lambda_x_Bu).real + self.parameter(self.D) * emb
         return out
 
     @jaxtyped(typechecker=typechecker)

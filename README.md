@@ -153,6 +153,17 @@ mlp = build_named_model(
 )
 ```
 
+LRU layers remain trainable by default for backward compatibility. Freeze only
+the LRU parameters while leaving the residual trunk and task head trainable via:
+
+```python
+frozen_lru = build_named_model(
+    model_name="LRU", input=F, hidden=64, output=4, num_layers=2,
+    layer_kwargs={"LRU": {"trainable": False}},
+    key=jax.random.key(4),
+)
+```
+
 ## Running Baselines
 You can compare various recurrent models on our datasets with a single command
 ```bash
