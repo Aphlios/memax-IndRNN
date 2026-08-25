@@ -100,6 +100,7 @@ class Attention(GRAS):
         window_size: int,
         positional_embedding: Optional[str],
         key,
+        trainable: bool = True,
     ):
         """Standard dot-product attention with a sliding window.
         Arguments:
@@ -112,6 +113,7 @@ class Attention(GRAS):
             "rope",
             "alibi",
         ], "positional_embedding must be one of None, 'rope', or 'alibi'"
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.readout_dim = recurrent_size
         self.window_size = window_size

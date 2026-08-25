@@ -71,8 +71,9 @@ class S6(GRAS):
     hidden_size: int  # input and output dimensions
     recurrent_size: int  # hidden state dimension
 
-    def __init__(self, recurrent_size, hidden_size, key):
+    def __init__(self, recurrent_size, hidden_size, key, trainable: bool = True):
         keys = jax.random.split(key, 4)
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = hidden_size

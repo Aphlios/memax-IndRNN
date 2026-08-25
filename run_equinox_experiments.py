@@ -58,6 +58,12 @@ def parse_args():
         help="Loss function to use (e.g., loss_classify_terminal_output, other_loss_fn)",
     )
     parser.add_argument("--models", type=str, nargs="+", default="all")
+    parser.add_argument(
+        "--mixer-trainable",
+        action="store_true",
+        default=False,
+        help="Train residual LayerMixer parameters (frozen by default).",
+    )
     return parser.parse_args()
 
 
@@ -199,6 +205,7 @@ def main():
         output=feature_out,
         num_layers=args.num_layers,
         models=args.models,
+        model_kwargs={"mixer_trainable": args.mixer_trainable},
         key=key,
     )
 

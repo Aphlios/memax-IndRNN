@@ -28,6 +28,7 @@ class ResidualModel(Module):
         recurrent_size,
         num_layers=2,
         activation=jax.nn.leaky_relu,
+        mixer_trainable: bool = False,
         *,
         key,
     ):
@@ -48,6 +49,7 @@ class ResidualModel(Module):
                     recurrent_size,
                     num_heads=1,
                     activation=activation,
+                    trainable=mixer_trainable,
                     key=mixer_key,
                 )
             )

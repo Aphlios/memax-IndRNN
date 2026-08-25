@@ -84,8 +84,9 @@ class GRU(GRAS):
     ]
     recurrent_size: int
 
-    def __init__(self, recurrent_size, key):
+    def __init__(self, recurrent_size, key, trainable: bool = True):
         keys = jax.random.split(key, 3)
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.readout_dim = recurrent_size
         self.algebra = Resettable(GRUSetAction(recurrent_size, key=keys[0]))

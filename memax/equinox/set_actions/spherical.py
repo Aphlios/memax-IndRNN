@@ -77,7 +77,8 @@ class Spherical(GRAS):
     recurrent_size: int
     hidden_size: int
 
-    def __init__(self, recurrent_size, hidden_size, key):
+    def __init__(self, recurrent_size, hidden_size, key, trainable: bool = True):
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = recurrent_size

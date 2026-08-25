@@ -139,9 +139,10 @@ trainable_reservoir = build_named_model(
 ```
 
 When constructing an optimizer directly, initialize it with
-`trainable_parameters(model)` from `memax.equinox.train_utils`. The provided
-training loop already does this, so frozen reservoirs are also protected from
-decoupled AdamW weight decay.
+`trainable_parameters(model)` from `memax.equinox.train_utils`. Use
+`nontrainable_parameters(model)` to inspect the complementary frozen parameter
+tree. The provided training loop already uses the trainable tree, so frozen
+parameters are also protected from decoupled AdamW weight decay.
 
 The `MLP` model is a trainable memory-free control. It applies a residual MLP
 independently at every timestep through the same GRAS scan interface:
@@ -153,8 +154,8 @@ mlp = build_named_model(
 )
 ```
 
-LRU layers remain trainable by default for backward compatibility. Freeze only
-the LRU parameters while leaving the residual trunk and task head trainable via:
+All registered residual-trunk memory layers are trainable by default. Each one
+can be frozen independently through its `layer_kwargs` entry; for example:
 
 ```python
 frozen_lru = build_named_model(
@@ -164,10 +165,24 @@ frozen_lru = build_named_model(
 )
 ```
 
+Per-layer `LayerMixer` blocks have their own trainability setting and are frozen
+by default. Enable them explicitly without changing memory-layer trainability:
+
+```python
+trainable_mixers = build_named_model(
+    model_name="LRU", input=F, hidden=64, output=4, num_layers=2,
+    model_kwargs={"mixer_trainable": True},
+    key=jax.random.key(5),
+)
+```
+
+The input projection and task readout remain trainable in both examples.
+
 ## Running Baselines
 You can compare various recurrent models on our datasets with a single command
 ```bash
 python run_equinox_experiments.py # equinox framework
+python run_equinox_experiments.py --mixer-trainable # explicitly train LayerMixer
 python run_linen_experiments.py # flax linen framework
 ```
 

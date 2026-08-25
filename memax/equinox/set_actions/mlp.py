@@ -75,11 +75,13 @@ class MLP(GRAS):
         self,
         recurrent_size: int,
         activation: Callable[[Array], Array] = jax.nn.silu,
+        trainable: bool = True,
         *,
         key: PRNGKeyArray,
     ):
         if recurrent_size < 1:
             raise ValueError("recurrent_size must be positive")
+        self.trainable = bool(trainable)
         self.recurrent_size = int(recurrent_size)
         self.readout_dim = int(recurrent_size)
         self.algebra = Resettable(

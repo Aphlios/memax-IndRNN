@@ -88,7 +88,8 @@ class GDN(GRAS):
     w: nn.Linear
     alpha: nn.Linear
 
-    def __init__(self, hidden_size, recurrent_size, key):
+    def __init__(self, hidden_size, recurrent_size, key, trainable: bool = True):
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = recurrent_size

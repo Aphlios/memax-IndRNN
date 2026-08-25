@@ -61,8 +61,9 @@ class NMax(GRAS):
 
     g: nn.Sequential
 
-    def __init__(self, recurrent_size, key):
+    def __init__(self, recurrent_size, key, trainable: bool = True):
         self.recurrent_size = recurrent_size
+        self.trainable = bool(trainable)
         self.readout_dim = recurrent_size
         self.algebra = Resettable(NMaxSemigroup(recurrent_size))
         self.scan = semigroup_scan

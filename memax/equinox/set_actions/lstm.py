@@ -103,8 +103,9 @@ class LSTM(GRAS):
         LSTMRecurrentStateWithReset,
     ]
 
-    def __init__(self, recurrent_size, key):
+    def __init__(self, recurrent_size, key, trainable: bool = True):
         keys = jax.random.split(key, 3)
+        self.trainable = bool(trainable)
         self.readout_dim = recurrent_size
         self.algebra = Resettable(LSTMSetAction(recurrent_size, key=keys[0]))
         self.scan = set_action_scan

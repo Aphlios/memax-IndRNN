@@ -88,7 +88,8 @@ class Stack(GRAS):
     ]
     algebra: BinaryAlgebra
 
-    def __init__(self, recurrent_size, window_size, key):
+    def __init__(self, recurrent_size, window_size, key, trainable: bool = True):
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.stack_size = window_size
         self.readout_dim = recurrent_size * window_size

@@ -101,7 +101,7 @@ def test_frozen_lru_parameter_gradients_are_zero_but_input_gradient_flows():
     assert jnp.any(input_gradient != 0)
 
 
-def test_frozen_lru_is_excluded_but_trunk_stays_trainable():
+def test_frozen_lru_and_default_mixers_are_excluded_but_io_maps_stay_trainable():
     model = build_named_model(
         model_name="LRU",
         input=3,
@@ -116,7 +116,7 @@ def test_frozen_lru_is_excluded_but_trunk_stays_trainable():
     assert all(not layer.trainable for layer in model.layers)
     assert not _array_leaves(parameters.layers)
     assert _array_leaves(parameters.map_in)
-    assert _array_leaves(parameters.mixers)
+    assert not _array_leaves(parameters.mixers)
     assert _array_leaves(parameters.map_out)
 
 
@@ -141,4 +141,5 @@ def test_frozen_lru_is_unchanged_by_adamw_update():
     updated = eqx.apply_updates(model, updates)
 
     assert eqx.tree_equal(model.layers, updated.layers)
+    assert eqx.tree_equal(model.mixers, updated.mixers)
     assert not eqx.tree_equal(model.map_out, updated.map_out)

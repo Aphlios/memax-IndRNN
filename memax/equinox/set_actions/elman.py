@@ -67,7 +67,16 @@ class Elman(GRAS):
     hidden_size: int
     W_h: nn.Linear
 
-    def __init__(self, recurrent_size, hidden_size, activation=jax.nn.tanh, *, key):
+    def __init__(
+        self,
+        recurrent_size,
+        hidden_size,
+        activation=jax.nn.tanh,
+        trainable: bool = True,
+        *,
+        key,
+    ):
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = recurrent_size

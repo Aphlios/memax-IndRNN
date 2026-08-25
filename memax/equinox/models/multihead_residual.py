@@ -27,6 +27,7 @@ class MultiHeadResidualModel(Module):
         num_heads,
         num_layers=2,
         activation=jax.nn.leaky_relu,
+        mixer_trainable: bool = False,
         *,
         key,
     ):
@@ -53,6 +54,7 @@ class MultiHeadResidualModel(Module):
                     recurrent_size,
                     num_heads=num_heads,
                     activation=activation,
+                    trainable=mixer_trainable,
                     key=mixer_key,
                 )
             )

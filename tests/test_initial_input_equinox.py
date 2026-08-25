@@ -55,6 +55,7 @@ def ce_loss(y_hat, y):
         3 - 1,
         key=jax.random.key(0),
         num_heads=2,
+        model_kwargs={"mixer_trainable": True},
     ).items(),
 )
 def test_initial_input(

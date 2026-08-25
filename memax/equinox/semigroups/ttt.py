@@ -118,11 +118,13 @@ class TTTLinear(GRAS):
         key: PRNGKeyArray,
         positional_embedding: Optional[str] = None,
         use_residual: bool = False,
+        trainable: bool = True,
     ):
         assert positional_embedding in [
             None,
             "rope",
         ], "positional_embedding must be None or 'rope'"
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = recurrent_size

@@ -121,7 +121,9 @@ class FFM(GRAS):
         trace_size: int,
         context_size: int,
         key: Array,
+        trainable: bool = True,
     ):
+        self.trainable = bool(trainable)
         self.hidden_size = hidden_size
         self.readout_dim = hidden_size
         self.trace_size = trace_size

@@ -160,6 +160,7 @@ class ESNCell(GRAS):
         *,
         key: PRNGKeyArray,
     ):
+        self.trainable = bool(trainable)
         self.input_size = int(input_size)
         self.hidden_size = int(hidden_size)
         self.readout_dim = int(hidden_size)

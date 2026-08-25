@@ -10,7 +10,8 @@ class LayerMixer(eqx.Module):
     """Per-head linears from readout features to trunk width, then norm and activation.
 
     Applies ``H`` independent ``Linear(in_features, head_dim)`` maps, concatenates to
-    ``out_features``, then LayerNorm and activation.
+    ``out_features``, then LayerNorm and activation. Mixer parameters are frozen by
+    default and can be enabled independently from the memory layer.
     """
 
     num_heads: int
@@ -20,6 +21,7 @@ class LayerMixer(eqx.Module):
     heads: Tuple[nn.Linear, ...]
     norm: nn.LayerNorm
     activation: eqx.Module
+    trainable: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -27,6 +29,7 @@ class LayerMixer(eqx.Module):
         out_features: int,
         num_heads: int,
         activation: Callable[[Array], Array] = jax.nn.leaky_relu,
+        trainable: bool = False,
         *,
         key: Shaped[PRNGKeyArray, ""],
     ):
@@ -39,6 +42,7 @@ class LayerMixer(eqx.Module):
         self.out_features = out_features
         self.num_heads = num_heads
         self.head_dim = out_features // num_heads
+        self.trainable = bool(trainable)
         keys = jax.random.split(key, num_heads)
         self.heads = tuple(
             nn.Linear(in_features, self.head_dim, key=head_key) for head_key in keys
@@ -47,7 +51,17 @@ class LayerMixer(eqx.Module):
         self.activation = nn.Lambda(activation)
 
     def __call__(self, z: Array) -> Array:
-        ys = jnp.stack([head(z) for head in self.heads])
+        heads = self.heads
+        if not self.trainable:
+            heads = jax.tree.map(
+                lambda leaf: (
+                    jax.lax.stop_gradient(leaf)
+                    if eqx.is_inexact_array(leaf)
+                    else leaf
+                ),
+                heads,
+            )
+        ys = jnp.stack([head(z) for head in heads])
         y = ys.reshape(-1)
         y = self.norm(y)
         return self.activation(y)

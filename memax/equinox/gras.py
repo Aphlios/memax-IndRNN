@@ -53,6 +53,9 @@ class GRAS(Module):
     ```
     """
 
+    trainable: bool = eqx.field(static=True)
+    """Whether the memory-layer parameters participate in optimization."""
+
     readout_dim: int
     """Feature dimension returned by ``backward_map`` before trunk mixing."""
 
@@ -105,6 +108,16 @@ class GRAS(Module):
 
         You probably do not need to override this."""
         emb, start = x
+        module = self
+        if not self.trainable:
+            module = jax.tree.map(
+                lambda leaf: (
+                    jax.lax.stop_gradient(leaf)
+                    if eqx.is_inexact_array(leaf)
+                    else leaf
+                ),
+                self,
+            )
         T = start.shape[0]
         if key is None:
             in_key, scan_key, out_key = (None, None, None)
@@ -112,9 +125,9 @@ class GRAS(Module):
             in_key, scan_key, out_key = jax.random.split(key, 3)
             in_key = jax.random.split(in_key, T)
             out_key = jax.random.split(out_key, T)
-        scan_input = eqx.filter_vmap(self.forward_map)(x, in_key)
-        next_h = self.scan(self.algebra, h, scan_input)
-        y = eqx.filter_vmap(self.backward_map)(next_h, x, out_key)
+        scan_input = eqx.filter_vmap(module.forward_map)(x, in_key)
+        next_h = module.scan(module.algebra, h, scan_input)
+        y = eqx.filter_vmap(module.backward_map)(next_h, x, out_key)
         return next_h, y
 
     def initialize_carry(

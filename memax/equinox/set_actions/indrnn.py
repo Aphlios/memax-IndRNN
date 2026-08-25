@@ -105,9 +105,11 @@ class IndRNN(GRAS):
         recurrent_min_abs: float = 0.0,
         recurrent_max_abs: Optional[float] = None,
         max_timesteps: int = 1024,
+        trainable: bool = True,
         *,
         key: PRNGKeyArray,
     ):
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.readout_dim = recurrent_size

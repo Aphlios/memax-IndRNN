@@ -60,8 +60,9 @@ class Identity(GRAS):
     ]
     algebra: BinaryAlgebra
 
-    def __init__(self, recurrent_size, key):
+    def __init__(self, recurrent_size, key, trainable: bool = True):
         del key
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.readout_dim = recurrent_size
         self.algebra = Resettable(IdentitySemigroup())

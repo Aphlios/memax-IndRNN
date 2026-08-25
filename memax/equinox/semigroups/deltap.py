@@ -92,7 +92,15 @@ class DeltaProduct(GRAS):
     w: nn.Linear
     alpha: nn.Linear
 
-    def __init__(self, hidden_size: int, recurrent_size: int, rank: int, key):
+    def __init__(
+        self,
+        hidden_size: int,
+        recurrent_size: int,
+        rank: int,
+        key,
+        trainable: bool = True,
+    ):
+        self.trainable = bool(trainable)
         self.recurrent_size = recurrent_size
         self.hidden_size = hidden_size
         self.rank = rank

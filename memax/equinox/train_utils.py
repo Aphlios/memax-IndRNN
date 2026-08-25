@@ -12,6 +12,8 @@ from beartype.typing import Any, Callable, Dict, Optional, Sequence, Tuple, Unio
 from jaxtyping import Array, Shaped
 
 from memax.equinox.groups import Module
+from memax.equinox.gras import GRAS
+from memax.equinox.models.layer_mixer import LayerMixer
 from memax.equinox.models.multihead_residual import MultiHeadResidualModel
 from memax.equinox.models.residual import ResidualModel
 from memax.equinox.reservoir.build import (
@@ -81,15 +83,17 @@ def accuracy(
 def trainable_filter_spec(model: Module):
     """Return an Equinox filter spec honoring explicitly frozen subtrees.
 
-    A false spec is assigned to every leaf of a reservoir or LRU constructed
-    with ``trainable=False``. This keeps those arrays out of optimizer state
-    and prevents decoupled weight decay (for example AdamW) from changing them.
+    A false spec is assigned to every leaf of a memory layer, layer mixer, or
+    reservoir constructed with ``trainable=False``. This keeps those arrays out
+    of optimizer state and prevents decoupled weight decay (for example AdamW)
+    from changing them.
     """
 
     def is_frozen_module(node):
-        is_reservoir = isinstance(node, RESERVOIR_MODEL_TYPES)
-        is_lru = isinstance(node, LRU)
-        return (is_reservoir or is_lru) and not node.trainable
+        supports_trainability = isinstance(
+            node, (GRAS, LayerMixer, *RESERVOIR_MODEL_TYPES)
+        )
+        return supports_trainability and not node.trainable
 
     def filter_node(node):
         if is_frozen_module(node):
@@ -107,6 +111,23 @@ def trainable_parameters(model: Module):
     """Filter a model down to parameters that should be optimized."""
 
     return eqx.filter(model, trainable_filter_spec(model))
+
+
+def nontrainable_filter_spec(model: Module):
+    """Return the complementary filter for explicitly frozen parameters."""
+
+    trainable_spec = trainable_filter_spec(model)
+    return jax.tree.map(
+        lambda node, is_trainable: eqx.is_inexact_array(node) and not is_trainable,
+        model,
+        trainable_spec,
+    )
+
+
+def nontrainable_parameters(model: Module):
+    """Filter a model down to explicitly frozen inexact-array parameters."""
+
+    return eqx.filter(model, nontrainable_filter_spec(model))
 
 
 def loss_regress_terminal_output(
@@ -376,6 +397,10 @@ def build_model(
     :class:`~memax.equinox.models.multihead_residual.MultiHeadResidualModel`; omit it
     for :class:`~memax.equinox.models.residual.ResidualModel`.
 
+    Every registered memory cell accepts ``trainable`` in its ``layer_kwargs`` entry.
+    Layer mixers are frozen by default; set ``model_kwargs={"mixer_trainable": True}``
+    to optimize them independently from the memory cells.
+
     The three reservoir names are available when explicitly requested. They
     return reservoir features directly and do not use ``output`` or add a
     readout. Their model-specific options belong under their entry in
@@ -401,7 +426,9 @@ def build_model(
         ),
         # semigroups
         "NMax": lambda recurrent_size, key: NMax(
-            recurrent_size=recurrent_size, key=key
+            recurrent_size=recurrent_size,
+            key=key,
+            **layer_kwargs.get("NMax", {}),
         ),
         "FART": lambda recurrent_size, key: FART(
             hidden_size=recurrent_size,
@@ -478,25 +505,25 @@ def build_model(
         "Stack": lambda recurrent_size, key: Stack(
             recurrent_size=recurrent_size,
             key=key,
-            **layer_kwargs.get("Stack", {"window_size": 4}),
+            **({"window_size": 4} | layer_kwargs.get("Stack", {})),
         ),
         "Attention": lambda recurrent_size, key: Attention(
             recurrent_size=recurrent_size,
             positional_embedding=None,
             key=key,
-            **layer_kwargs.get("Attention", {"window_size": 20}),
+            **({"window_size": 20} | layer_kwargs.get("Attention", {})),
         ),
         "Attention-RoPE": lambda recurrent_size, key: Attention(
             recurrent_size=recurrent_size,
             positional_embedding="rope",
             key=key,
-            **layer_kwargs.get("Attention-RoPE", {"window_size": 20}),
+            **({"window_size": 20} | layer_kwargs.get("Attention-RoPE", {})),
         ),
         "Attention-ALiBi": lambda recurrent_size, key: Attention(
             recurrent_size=recurrent_size,
             positional_embedding="alibi",
             key=key,
-            **layer_kwargs.get("Attention-ALiBi", {"window_size": 20}),
+            **({"window_size": 20} | layer_kwargs.get("Attention-ALiBi", {})),
         ),
         # set actions
         "GRU": lambda recurrent_size, key: GRU(
