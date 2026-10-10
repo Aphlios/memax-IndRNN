@@ -351,6 +351,10 @@ def build_named_model(
     these models, ``output`` is unused and model-specific options can be passed
     through ``model_kwargs``. Other names retain the residual-trunk behavior
     and require ``output``.
+
+    For residual trunks, ``model_kwargs={"activation": fn}`` sets the activation
+    after each Mixer's LayerNorm. ``fn`` must be a shape-preserving JAX-compatible
+    callable; the default is ``jax.nn.leaky_relu``.
     """
 
     if model_name in RESERVOIR_MODEL_NAMES:
@@ -400,6 +404,10 @@ def build_model(
     Every registered memory cell accepts ``trainable`` in its ``layer_kwargs`` entry.
     Layer mixers are frozen by default; set ``model_kwargs={"mixer_trainable": True}``
     to optimize them independently from the memory cells.
+
+    Set ``model_kwargs={"activation": fn}`` to customize the activation after
+    every Mixer's LayerNorm, including multihead mixers. ``fn`` must be a
+    shape-preserving JAX-compatible callable and defaults to ``jax.nn.leaky_relu``.
 
     The three reservoir names are available when explicitly requested. They
     return reservoir features directly and do not use ``output`` or add a

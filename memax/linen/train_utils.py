@@ -103,7 +103,12 @@ def get_residual_memory_models(
     layer_kwargs: Optional[Dict[str, Any]] = None,
     model_kwargs: Optional[Dict] = None,
 ) -> Dict:
-    """Constructs a trunk of stacked memory cells."""
+    """Constructs a trunk of stacked memory cells.
+
+    Set ``model_kwargs={"activation": fn}`` to customize the activation after
+    every Mixer's LayerNorm. ``fn`` must be a shape-preserving JAX-compatible
+    callable and defaults to ``jax.nn.leaky_relu``.
+    """
     layer_kwargs = layer_kwargs or {}
     model_kwargs = dict(model_kwargs or {})
     if input is not None:

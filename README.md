@@ -178,6 +178,29 @@ trainable_mixers = build_named_model(
 
 The input projection and task readout remain trainable in both examples.
 
+Customize the activation after each Mixer's `Linear -> LayerNorm` by passing a
+JAX-compatible callable in `model_kwargs["activation"]`. It defaults to
+`jax.nn.leaky_relu` and applies to every block, including multihead mixers:
+
+```python
+def mixer_activation(x):
+    return jax.nn.leaky_relu(x, negative_slope=0.1)
+
+lru = build_named_model(
+    model_name="LRU", input=F, hidden=64, output=4, num_layers=2,
+    model_kwargs={"activation": mixer_activation},
+    key=jax.random.key(6),
+)
+```
+
+You can also pass `jax.nn.gelu`, `jax.nn.silu`, `jax.nn.relu`, or `lambda x: x`
+for an identity activation. The callable must preserve the feature shape. The
+same `model_kwargs` option works with Equinox `build_model` and Linen
+`get_residual_memory_models`. When constructing `LayerMixer`, `ResidualModel`,
+or `MultiHeadResidualModel` directly, pass `activation=mixer_activation`.
+This setting controls the Mixer activation only; the LRU state update and
+readout remain linear.
+
 ## Running Baselines
 You can compare various recurrent models on our datasets with a single command
 ```bash

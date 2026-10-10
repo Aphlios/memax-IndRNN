@@ -9,10 +9,10 @@ from memax.mtypes import Input, ResetRecurrentState
 
 
 class ResidualModel(Module):
-    """A model consisting of multiple recurrent layers, with a
-    residual connection from the original input into each layer.
+    """Stack recurrent blocks with a residual around each layer and its mixer.
 
-    There is a nonlinearity between network layers."""
+    Each block computes ``x + mixer(recurrent_layer(x))``.
+    """
 
     layers: List[Module]
     mixers: List[LayerMixer]
@@ -69,7 +69,7 @@ class ResidualModel(Module):
             tmp, feat = recurrent_layer(h_i, layer_in, key=rkey)
             h_out.append(tmp)
             z = filter_vmap(mixer)(feat)
-            layer_in = (z, start)
+            layer_in = (layer_in[0] + z, start)
         out = filter_vmap(self.map_out)(layer_in[0])
         return tuple(h_out), out
 

@@ -9,7 +9,7 @@ from memax.mtypes import Input, ResetRecurrentState
 
 
 class MultiHeadResidualModel(Module):
-    """A residual stack where per-layer ``ff`` is replaced by :class:`LayerMixer`."""
+    """Stack recurrent blocks with a residual around each layer and its multihead mixer."""
 
     layers: List[Module]
     mixers: List[LayerMixer]
@@ -74,7 +74,7 @@ class MultiHeadResidualModel(Module):
             tmp, feat = recurrent_layer(h_i, layer_in, key=rkey)
             h_out.append(tmp)
             z = filter_vmap(mixer)(feat)
-            layer_in = (z, start)
+            layer_in = (layer_in[0] + z, start)
         out = filter_vmap(self.map_out)(layer_in[0])
         return tuple(h_out), out
 
